@@ -1,14 +1,47 @@
-
+--[[
+ PuckAFK | Tower Incremental (UPD6) | Smart Autofarm v1.2.4 | Restored direct startup + safe optional same-place rejoin
+ Source: user-provided UPD6 place 75766778174856 and Cobalt capture.
+ Designed for normal client data + declared remotes, not privileged/admin remotes.
+ WARNING: Client scripts cannot guarantee server acceptance or avoid moderation.
+ PuckUI: https://raw.githubusercontent.com/PuckAFK/Puck-Loader/refs/heads/main/ui/PuckUI.lua
+]]
 if game.PlaceId ~= 75766778174856 then
     warn('[PuckAFK TI] Incorrect game/place id: '..tostring(game.PlaceId)); return
 end
+local loadedOk,isLoaded=pcall(function() return game:IsLoaded() end)
+if loadedOk and not isLoaded then pcall(function() game.Loaded:Wait() end) end
 local Players=game:GetService('Players')
 local RS=game:GetService('ReplicatedStorage')
 local RunService=game:GetService('RunService')
 local TweenService=game:GetService('TweenService')
 local LP=Players.LocalPlayer
+for _=1,50 do
+ if LP then break end
+ task.wait(0.1)
+ LP=Players.LocalPlayer
+end
+if not LP then warn('[PuckAFK TI] Player did not load; try executing after joining the game.') return end
 local unpack=table.unpack or unpack
 local gen=(getgenv and getgenv()) or _G
+local TeleportService=game:GetService('TeleportService')
+local REJOIN_PLACE=75766778174856
+local REJOIN_KEY='PuckAFK_TowerIncremental_UPD6_v124_Rejoin'
+local REJOIN_SOURCE_PATH='PuckAFK/TowerIncremental/Autofarm.lua'
+-- Deactivate the v1.2.3 transfer record so its previously queued loader cannot relaunch it.
+pcall(function()
+ TeleportService:SetTeleportSetting('PuckAFK_TowerIncremental_UPD6_v123_Rejoin',
+  {enabled=false,running=false,place=REJOIN_PLACE})
+end)
+gen.__PUCK_TI_REJOIN_SYNC=nil
+-- This flag is set only by the queued/autoexec loader, never by a normal manual start.
+local queuedResume=(gen.__PUCK_TI_QUEUED_REJOIN==true)
+gen.__PUCK_TI_QUEUED_REJOIN=nil
+local infoOK,oldTransfer=pcall(function()
+ return TeleportService:GetTeleportSetting(REJOIN_KEY)
+end)
+local resumeFarmOnJoin=queuedResume and infoOK and type(oldTransfer)=='table'
+ and oldTransfer.enabled==true and oldTransfer.place==REJOIN_PLACE
+ and oldTransfer.running==true
 if type(gen.__PUCK_TOWER_UNLOAD)=='function' then pcall(gen.__PUCK_TOWER_UNLOAD) end
 local alive=true
 local conns={}
@@ -18,7 +51,7 @@ local cfg={Master=false, Stairs=true,Upgrades=true,Doors=true,Tree=true,Rebirth=
  Crystals=true,Wood=true,Essence=true,Glyphs=true,Smelter=true,Starforge=true,Refractor=true,
  Production=true,Totems=false,Dragons=true,Volts=true,Feathers=true,Pearls=true,Gateway=true,FreeRewards=true,Preservation=true,
  TweenSpeed=165, MinimumGoldReserve=0.20, ResourceReserve=0.15, RebirthMode='Smart',
- Movement='Hybrid', GlyphSeconds=6, FastOwnedStairs=true, FastUnlockedTeleports=true, ResourceInterval=12, ClimbBurstSeconds=24, BurstUpgrades=12, MaxRemotePerSecond=8, BestOwnedTrail=true, RedeemReleaseCode=true}
+ Movement='Hybrid', GlyphSeconds=6, AutoReExecute=true, AntiAFK=true, FastOwnedStairs=true, FastUnlockedTeleports=true, ResourceInterval=12, ClimbBurstSeconds=24, BurstUpgrades=12, MaxRemotePerSecond=8, BestOwnedTrail=true, RedeemReleaseCode=true}
 local function clock() return os.clock() end
 -- Intentionally quiet: the beginner build has no developer log/diagnostic mode.
 local function trace(...) end
@@ -1123,8 +1156,78 @@ local function taskLoop()
  end
 end
 task.spawn(taskLoop)
+-- Auto-rejoin must NEVER participate in loading the current autofarm.
+-- Files are optional and queue registration failures must not interrupt gameplay.
+local rejoinQueued=false
+local function teleportQueueFunction()
+ local g=(type(getgenv)=='function' and getgenv()) or gen
+ local synTable=(type(syn)=='table' and syn) or nil
+ local fluxTable=(type(fluxus)=='table' and fluxus) or nil
+ local f=(synTable and synTable.queue_on_teleport)
+    or (fluxTable and fluxTable.queue_on_teleport)
+    or (g and (g.queue_on_teleport or g.queueonteleport or g.queue_on_tp or g.queueontp))
+    or queue_on_teleport or queueonteleport
+ return type(f)=='function' and f or nil
+end
+local function availableRejoinFile()
+ local reader=(type(readfile)=='function' and readfile) or
+              (type(gen.readfile)=='function' and gen.readfile)
+ if type(reader)~='function' then return false end
+ local ok,src=pcall(reader,REJOIN_SOURCE_PATH)
+ return ok and type(src)=='string'
+    and src:find('Smart Autofarm v1.2.4',1,true)~=nil
+    and src:find('PuckAFK | Tower Incremental (UPD6)',1,true)~=nil
+end
+local QUEUED_LOADER=[=[
+if game.PlaceId ~= 75766778174856 then return end
+local _ok,_s=pcall(function()
+ return game:GetService('TeleportService'):GetTeleportSetting('PuckAFK_TowerIncremental_UPD6_v124_Rejoin')
+end)
+if not _ok or type(_s)~='table' or _s.enabled~=true or _s.place~=75766778174856 then return end
+local _env=(type(getgenv)=='function' and getgenv()) or _G
+local _reader=(type(readfile)=='function' and readfile) or _env.readfile
+if type(_reader)~='function' then return end
+local _okFile,_code=pcall(_reader,'PuckAFK/TowerIncremental/Autofarm.lua')
+if not _okFile or type(_code)~='string' or not _code:find('Smart Autofarm v1.2.4',1,true) then return end
+local _run=type(loadstring)=='function' and loadstring(_code) or nil
+if not _run then return end
+local _g=(type(getgenv)=='function' and getgenv()) or _G
+_g.__PUCK_TI_QUEUED_REJOIN=true
+_run()
+]=]
+local function syncRejoin(enabled,running)
+ enabled=enabled==true; running=running==true
+ local ok=pcall(function()
+  TeleportService:SetTeleportSetting(REJOIN_KEY,
+    {enabled=enabled,running=running,place=REJOIN_PLACE})
+ end)
+ if not enabled or not ok or rejoinQueued then return end
+ if not availableRejoinFile() then return end
+ local queue=teleportQueueFunction()
+ if not queue then return end
+ local done=pcall(queue,QUEUED_LOADER)
+ if done then rejoinQueued=true end
+end
+-- Low-overhead idle event (best effort: depends on executor/game support).
+local idleOk,idleConn=pcall(function()
+ return LP.Idled:Connect(function()
+  if not alive or not cfg.AntiAFK then return end
+  pcall(function()
+   local vu=game:GetService('VirtualUser')
+   local camera=workspace.CurrentCamera
+   local cf=(camera and camera.CFrame) or CFrame.new()
+   vu:CaptureController()
+   vu:Button2Down(Vector2.new(0,0),cf)
+   task.wait(0.06)
+   vu:Button2Up(Vector2.new(0,0),cf)
+  end)
+ end)
+end)
+if idleOk and idleConn then conns[#conns+1]=idleConn end
+
 local function unload()
  if not alive then return end
+ syncRejoin(false,false)
  -- Flush the selected profile before destroying PuckUI. Auto Save may not
  -- have reached its next 0.5-second poll when the user clicks Unload.
  if win and win.Config and win.Config.Available and win.Config.AutoSave and win._WriteConfig then
@@ -1138,14 +1241,30 @@ local function unload()
  if gen.__PUCK_TOWER_UNLOAD==unload then gen.__PUCK_TOWER_UNLOAD=nil end
 end
 gen.__PUCK_TOWER_UNLOAD=unload
-gen.__PUCK_TOWER_START=function() cfg.Master=true end
-gen.__PUCK_TOWER_STOP=function() cfg.Master=false; climbStart=0; stopMove();table.clear(packets);table.clear(inQueue) end
+gen.__PUCK_TOWER_START=function()
+ cfg.Master=true
+ syncRejoin(cfg.AutoReExecute,true)
+end
+gen.__PUCK_TOWER_STOP=function()
+ cfg.Master=false;climbStart=0;stopMove();table.clear(packets);table.clear(inQueue)
+ syncRejoin(cfg.AutoReExecute,false)
+end
+local tpOk,tpConn=pcall(function()
+ return LP.OnTeleport:Connect(function(tpState)
+  if tpState~=Enum.TeleportState.Started then return end
+  if win and win.Config and win.Config.Available and win.Config.AutoSave and win._WriteConfig then
+   pcall(function() win:_WriteConfig(win.Config.Selected,false) end)
+  end
+  syncRejoin(cfg.AutoReExecute,cfg.Master)
+ end)
+end)
+if tpOk and tpConn then conns[#conns+1]=tpConn end
 -- Persistent profiles are part of PuckUI. Keep this ConfigId STABLE in all future
 -- versions so the user does not lose their preferred profile after script updates.
 local CONFIG_ID='Tower_Incremental_UPD6_Fast_v120' -- compatible with v1.2.0
 if ui and type(ui.CreateWindow)=='function' then
  local ok,result=pcall(function() return ui:CreateWindow({Title='PuckAFK | Tower Incremental',
-    SubTitle='UPD6 Smart Autofarm v1.2.2',GuiName='PuckAFK_TI_UPD6_FAST',ConfigId=CONFIG_ID,
+    SubTitle='UPD6 Smart Autofarm v1.2.4',GuiName='PuckAFK_TI_UPD6_FAST',ConfigId=CONFIG_ID,
     Width=515,Height=575,Configs={AutoSave=true,AutoLoad=true}}) end)
  if ok then win=result else warn('[PuckAFK TI] Window error '..tostring(result)) end
 end
@@ -1200,6 +1319,9 @@ local function toggle(tab,name,key,default)
    Callback=function(v)
      if not alive then return end
      cfg[key]=v==true
+     if key=='Master' or key=='AutoReExecute' then
+      syncRejoin(cfg.AutoReExecute,cfg.Master)
+     end
      if key=='Master' and not cfg.Master then
       climbStart=0;stopMove();table.clear(packets);table.clear(inQueue)
      end
@@ -1265,6 +1387,11 @@ if win then
 
  local settings=win:CreateTab('Settings')
  settingsTab=settings
+ settings:CreateSection('AFK and Rejoining')
+ toggle(settings,'Auto Execute After Rejoin','AutoReExecute',cfg.AutoReExecute)
+ toggle(settings,'Prevent Idle Timeout','AntiAFK',cfg.AntiAFK)
+ settings:CreateParagraph({Title='Auto Execute setup',
+  Content='Same-game reload requires an executor teleport queue and a saved copy of this script at PuckAFK/TowerIncremental/Autofarm.lua. Without that, normal farming still works.',Height=86})
  settings:CreateSection('Autofarm Options')
  toggle(settings,'Auto Rebirth','Rebirth',cfg.Rebirth)
  toggle(settings,'Keep upgrades before rebirth','Preservation',cfg.Preservation)
@@ -1380,5 +1507,23 @@ if win then
    phaseLabel:Set('Status: '..friendlyStatus())
    infoLabel:Set('Floor '..(state.floor or currentFloor())..'  |  Stairs '..(state.step or currentStep())..'  |  Rebirths '..rebirthNumber())
   end)
+ end)
+end
+
+-- Apply current saved controls without interfering with startup.
+task.defer(function()
+ if not alive then return end
+ syncRejoin(cfg.AutoReExecute,cfg.Master)
+end)
+if resumeFarmOnJoin then
+ task.spawn(function()
+  task.wait(1.3)
+  if not alive or not cfg.AutoReExecute then return end
+  cfg.Master=true
+  local ctrl=controls.Master
+  if ctrl and type(ctrl.Set)=='function' then
+   pcall(function() ctrl:Set(true) end)
+  end
+  syncRejoin(true,true)
  end)
 end
